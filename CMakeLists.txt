@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.28)
-project(ffmpeg_professional)
+project(ffmpeg_professional_git)
 
 set(CMAKE_CXX_STANDARD 17)
 
@@ -22,7 +22,6 @@ set(FFMPEG_LIBS
         swresample
 )
 
-
 # 查找 FFmpeg 库
 foreach(lib ${FFMPEG_LIBS})
     find_library(${lib}_LIBRARY NAMES ${lib} PATHS "${FFMPEG_ROOT}/libwin64")
@@ -33,36 +32,36 @@ foreach(lib ${FFMPEG_LIBS})
 endforeach()
 
 set(app
-        src/app/stream_application.cpp
-        include/app/stream_application.h
+        src/app/application.cpp
+        include/app/application.h
 )
 
 set(config
-        src/config/stream_types.cpp
-        include/config/stream_types.h
+        src/config/config.cpp
+        include/config/config.h
 )
 
 set(common
         src/common/threadpool.cpp
         include/common/threadpool.h
-        src/common/stream_task.cpp
-        include/common/stream_task.h
-        src/common/stream_manager.cpp
-        include/common/stream_manager.h
+        src/common/utils.cpp
+        include/common/utils.h
+        src/common/common.cpp
+        include/common/common.h
 
 )
 
 set(ffmpeg_base
-        src/ffmpeg_base/hw_decoder.cpp
-        include/ffmpeg_base/hw_decoder.h
-        src/ffmpeg_base/hw_encoder.cpp
-        include/ffmpeg_base/hw_encoder.h
-        src/ffmpeg_base/base_stream.cpp
-        include/ffmpeg_base/base_stream.h
-        src/ffmpeg_base/pull_stream.cpp
-        include/ffmpeg_base/pull_stream.h
-        src/ffmpeg_base/push_stream.cpp
-        include/ffmpeg_base/push_stream.h
+        src/ffmpeg_base/decoder.cpp
+        include/ffmpeg_base/decoder.h
+        src/ffmpeg_base/encoder.cpp
+        include/ffmpeg_base/encoder.h
+        src/ffmpeg_base/hw_accel.cpp
+        include/ffmpeg_base/hw_accel.h
+        src/ffmpeg_base/stream_processor.cpp
+        include/ffmpeg_base/stream_processor.h
+        src/ffmpeg_base/stream_manager.cpp
+        include/ffmpeg_base/stream_manager.h
 
 )
 
@@ -71,7 +70,7 @@ set(logger
         src/logger/logger.cpp
 )
 
-add_executable(ffmpeg_professional main.cpp ${app} ${common} ${ffmpeg_base} ${logger} ${config})
+add_executable(ffmpeg_professional_git main.cpp ${app} ${common} ${ffmpeg_base} ${logger} ${config})
 
 # 链接 FFmpeg 库
-target_link_libraries(ffmpeg_professional PRIVATE ${FOUND_FFMPEG_LIBS} pthread)
+target_link_libraries(ffmpeg_professional_git PRIVATE ${FOUND_FFMPEG_LIBS} pthread)

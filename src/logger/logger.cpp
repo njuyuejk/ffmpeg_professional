@@ -1,296 +1,318 @@
-#include "logger/Logger.h"
-#include <iomanip>
-#include <sstream>
-#include <algorithm>
-#include <cstring>
+/**
+ * @file logger.cpp
+ * @brief 日志系统实现 - 支持每日滚动日志文件（不使用filesystem库）
+ */
 
+#include "logger/logger.h"
+#include "common/utils.h"
+#include <iostream>
+#include <chrono>
+#include <ctime>
+#include <iomanip>
+#include <algorithm>
+#include <sstream>
+
+// 平台特定的头文件
 #ifdef _WIN32
+#include <windows.h>
 #include <direct.h>
 #define MKDIR(dir) _mkdir(dir)
-#define PATH_SEPARATOR "\\"
 #else
 #include <sys/stat.h>
-    #include <unistd.h>
-    #define MKDIR(dir) mkdir(dir, 0755)
-    #define PATH_SEPARATOR "/"
+#include <sys/types.h>
+#include <unistd.h>
+#include <dirent.h>
+#define MKDIR(dir) mkdir(dir, 0777)
 #endif
 
+namespace ffmpeg_stream {
+
 // 静态成员初始化
-std::mutex Logger::logMutex;
-std::ofstream Logger::logFile;
-bool Logger::initialized = false;
-bool Logger::useFileOutput = false;
-LogLevel Logger::minimumLevel = LogLevel::INFO;
-std::string Logger::logDirectory = "logs";
-std::string Logger::currentLogDate = "";
+    LogLevel Logger::logLevel = LogLevel::INFO;
+    bool Logger::initialized = false;
 
-void Logger::init(bool logToFile, const std::string& logDir, LogLevel minLevel) {
-    std::lock_guard<std::mutex> lock(logMutex);
+    Logger::Logger()
+            : logToFile(false),
+              logDirectory("logs"),
+              logBaseName("ffmpeg_stream"),
+              maxLogDays(30) {
 
-    if (initialized) {
-        // 如果已经初始化，先关闭以前的文件
-        if (useFileOutput && logFile.is_open()) {
-            logFile.close();
-        }
+        // 获取当前日期
+        currentDate = getCurrentDateString();
     }
 
-    useFileOutput = logToFile;
-    minimumLevel = minLevel;
-    logDirectory = logDir;
-
-    if (useFileOutput) {
-        // 确保日志目录存在
-        if (!createDirectory(logDirectory)) {
-            std::cerr << "Failed to create log directory: " << logDirectory << std::endl;
-            useFileOutput = false;
-        } else {
-            // 清理旧日志
-            cleanupOldLogs();
-
-            // 初始化日志文件
-            std::string logFilePath = getCurrentLogFilePath();
-            logFile.open(logFilePath, std::ios::out | std::ios::app);
-            if (!logFile.is_open()) {
-                std::cerr << "Failed to open log file: " << logFilePath << std::endl;
-                useFileOutput = false;
-            }
-            else {
-                // 记录当前日期
-                time_t now = time(nullptr);
-                char dateStr[64];
-                strftime(dateStr, sizeof(dateStr), "%Y-%m-%d", localtime(&now));
-                currentLogDate = dateStr;
-            }
-        }
-    }
-
-    initialized = true;
-
-//    info("Logger initialized");
-}
-
-void Logger::shutdown() {
-    std::lock_guard<std::mutex> lock(logMutex);
-
-    if (initialized && useFileOutput && logFile.is_open()) {
-        info("Logger shutting down");
-        logFile.close();
-    }
-
-    initialized = false;
-}
-
-bool Logger::createDirectory(const std::string& path) {
-    // 对于多级目录，我们需要逐级创建
-    std::string currentPath;
-    std::string dirPath = path;
-
-    // 替换Windows路径分隔符为标准格式
-    std::replace(dirPath.begin(), dirPath.end(), '\\', '/');
-
-    // 分割路径并创建每个目录
-    size_t pos = 0;
-    while ((pos = dirPath.find('/', pos)) != std::string::npos) {
-        currentPath = dirPath.substr(0, pos);
-        if (!currentPath.empty() && !fileExists(currentPath)) {
-            if (MKDIR(currentPath.c_str()) != 0 && errno != EEXIST) {
-                return false;
-            }
-        }
-        pos++;
-    }
-
-    // 创建最后一级目录
-    if (!dirPath.empty() && !fileExists(dirPath)) {
-        if (MKDIR(dirPath.c_str()) != 0 && errno != EEXIST) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-bool Logger::fileExists(const std::string& filename) {
-    struct stat buffer;
-    return (stat(filename.c_str(), &buffer) == 0);
-}
-
-std::vector<std::string> Logger::getFilesInDirectory(const std::string& directory) {
-    std::vector<std::string> files;
-    DIR* dir;
-    struct dirent* ent;
-
-    if ((dir = opendir(directory.c_str())) != NULL) {
-        while ((ent = readdir(dir)) != NULL) {
-            // 跳过 . 和 ..
-            if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0) {
-                continue;
-            }
-
-            // 获取文件名
-            std::string filename = ent->d_name;
-
-            // 检查是否是常规文件（不是目录）
-            std::string fullPath = directory + PATH_SEPARATOR + filename;
-            struct stat st;
-            if (stat(fullPath.c_str(), &st) == 0 && S_ISREG(st.st_mode)) {
-                files.push_back(fullPath);
-            }
-        }
-        closedir(dir);
-    }
-
-    return files;
-}
-
-std::string Logger::getCurrentLogFilePath() {
-    time_t now = time(nullptr);
-    char dateStr[64];
-    strftime(dateStr, sizeof(dateStr), "%Y-%m-%d", localtime(&now));
-
-    // 日志文件格式：logs/log_YYYY-MM-DD.txt
-    return logDirectory + PATH_SEPARATOR + "log_" + std::string(dateStr) + ".txt";
-}
-
-void Logger::cleanupOldLogs() {
-    try {
-        // 获取日志目录中的所有文件
-        std::vector<std::string> allFiles = getFilesInDirectory(logDirectory);
-
-        // 筛选符合日志文件命名格式的文件
-        std::vector<std::string> logFiles;
-        for (const auto& filePath : allFiles) {
-            // 提取文件名
-            size_t lastSeparator = filePath.find_last_of("/\\");
-            std::string filename = filePath.substr(lastSeparator + 1);
-
-            // 检查文件名是否符合格式：log_YYYY-MM-DD.txt
-            if (filename.size() >= 15 && filename.substr(0, 4) == "log_" &&
-                filename.substr(filename.size() - 4) == ".txt") {
-                logFiles.push_back(filePath);
-            }
-        }
-
-        // 如果日志文件数量超过最大值，删除最旧的文件
-        if (logFiles.size() > MAX_LOG_DAYS) {
-            // 按文件名排序，因为使用了YYYY-MM-DD格式，字母序和时间序是一致的
-            std::sort(logFiles.begin(), logFiles.end());
-
-            // 删除最旧的日志文件
-            size_t filesToDelete = logFiles.size() - MAX_LOG_DAYS;
-            for (size_t i = 0; i < filesToDelete; ++i) {
-                // 删除文件
-                if (remove(logFiles[i].c_str()) != 0) {
-                    std::cerr << "Error deleting file: " << logFiles[i] << std::endl;
-                } else {
-                    // 提取文件名
-                    size_t lastSeparator = logFiles[i].find_last_of("/\\");
-                    std::string removedFile = logFiles[i].substr(lastSeparator + 1);
-                    std::cerr << "Removed old log file: " << removedFile << std::endl;
-                }
-            }
-        }
-    }
-    catch (const std::exception& e) {
-        std::cerr << "Error during log cleanup: " << e.what() << std::endl;
-    }
-}
-
-void Logger::checkAndRotateLogFile() {
-    if (!useFileOutput) return;
-
-    // 获取当前日期
-    time_t now = time(nullptr);
-    char dateStr[64];
-    strftime(dateStr, sizeof(dateStr), "%Y-%m-%d", localtime(&now));
-    std::string todayDate(dateStr);
-
-    // 如果日期变了，需要切换日志文件
-    if (todayDate != currentLogDate) {
-        std::lock_guard<std::mutex> lock(logMutex);
-
-        // 关闭当前日志文件
+    Logger::~Logger() {
         if (logFile.is_open()) {
             logFile.close();
         }
+    }
 
-        // 更新当前日期
-        currentLogDate = todayDate;
+    Logger& Logger::getInstance() {
+        static Logger instance;
+        return instance;
+    }
 
-        // 清理旧日志
-        cleanupOldLogs();
+    void Logger::setLogLevel(LogLevel level) {
+        logLevel = level;
+    }
 
-        // 打开新的日志文件
-        std::string logFilePath = getCurrentLogFilePath();
-        logFile.open(logFilePath, std::ios::out | std::ios::app);
-        if (!logFile.is_open()) {
-            std::cerr << "Failed to open log file: " << logFilePath << std::endl;
-            useFileOutput = false;
+    LogLevel Logger::getLogLevel() {
+        return logLevel;
+    }
+
+    void Logger::setLogToFile(bool toFile, const std::string& logDir, const std::string& baseName, int maxDays) {
+        Logger& instance = getInstance();
+        std::lock_guard<std::mutex> lock(instance.logMutex);
+
+        // 更新配置
+        instance.logToFile = toFile;
+        instance.logDirectory = logDir;
+        instance.logBaseName = baseName;
+        instance.maxLogDays = maxDays;
+
+        // 如果需要关闭当前日志文件
+        if (!toFile && instance.logFile.is_open()) {
+            instance.logFile.close();
+            return;
+        }
+
+        if (toFile) {
+            // 确保日志目录存在
+            if (!instance.createLogDirectory()) {
+                std::cerr << "Failed to create log directory: " << logDir << std::endl;
+                instance.logToFile = false;
+                return;
+            }
+
+            // 获取当前日期并设置日志文件
+            instance.currentDate = instance.getCurrentDateString();
+            instance.currentLogFile = instance.getLogFilePath(instance.currentDate);
+
+            // 打开日志文件
+            if (instance.logFile.is_open()) {
+                instance.logFile.close();
+            }
+
+            instance.logFile.open(instance.currentLogFile, std::ios::out | std::ios::app);
+            if (!instance.logFile.is_open()) {
+                std::cerr << "Failed to open log file: " << instance.currentLogFile << std::endl;
+                instance.logToFile = false;
+                return;
+            }
+
+            // 写入日志头
+            instance.logFile << "=== Log started at " << utils::getCurrentTimeString() << " ===" << std::endl;
+
+            // 清理旧日志文件
+            instance.cleanOldLogFiles();
         }
     }
-}
 
-void Logger::log(LogLevel level, const std::string& message) {
-    // 检查日志级别
-    if (level < minimumLevel) {
-        return;
+    void Logger::closeLogFile() {
+        Logger& instance = getInstance();
+        std::lock_guard<std::mutex> lock(instance.logMutex);
+
+        if (instance.logFile.is_open()) {
+            // 写入日志尾
+            instance.logFile << "=== Log ended at " << utils::getCurrentTimeString() << " ===" << std::endl;
+            instance.logFile.close();
+        }
+
+        instance.logToFile = false;
     }
 
-    // 检查是否需要切换日志文件
-    checkAndRotateLogFile();
+    bool Logger::rollLogFile() {
+        // 获取当前日期
+        std::string newDate = getCurrentDateString();
 
-    std::lock_guard<std::mutex> lock(logMutex);
+        // 如果日期变化，创建新的日志文件
+        if (newDate != currentDate) {
+            // 关闭当前文件
+            if (logFile.is_open()) {
+                logFile << "=== Log ended at " << utils::getCurrentTimeString() << " ===" << std::endl;
+                logFile.close();
+            }
 
-    // 获取当前时间
-    char timeStr[64];
-    time_t now = time(nullptr);
-    strftime(timeStr, sizeof(timeStr), "%Y-%m-%d %H:%M:%S", localtime(&now));
+            // 更新日期和文件路径
+            currentDate = newDate;
+            currentLogFile = getLogFilePath(currentDate);
 
-    // 转换日志级别为字符串
-    const char* levelStr;
-    switch (level) {
-        case LogLevel::DEBUG:   levelStr = "DEBUG"; break;
-        case LogLevel::INFO:    levelStr = "INFO"; break;
-        case LogLevel::WARNING: levelStr = "WARNING"; break;
-        case LogLevel::ERROR:   levelStr = "ERROR"; break;
-        case LogLevel::FATAL:   levelStr = "FATAL"; break;
-        default:                levelStr = "UNKNOWN";
+            // 打开新文件
+            logFile.open(currentLogFile, std::ios::out | std::ios::app);
+            if (!logFile.is_open()) {
+                std::cerr << "Failed to open new log file: " << currentLogFile << std::endl;
+                logToFile = false;
+                return false;
+            }
+
+            // 写入日志头
+            logFile << "=== Log started at " << utils::getCurrentTimeString() << " ===" << std::endl;
+
+            // 清理旧日志文件
+            cleanOldLogFiles();
+
+            return true;
+        }
+
+        return false;
     }
 
-    // 格式化日志消息
-    std::string formattedMessage =
-            std::string("[") + timeStr + "][" + levelStr + "] " + message;
+    void Logger::cleanOldLogFiles() {
+        try {
+            // 获取所有日志文件
+            std::vector<std::string> logFiles = getLogFiles();
 
-    // 输出到控制台
-    if (level == LogLevel::ERROR || level == LogLevel::FATAL) {
-        std::cerr << formattedMessage << std::endl;
-    } else {
-        std::cout << formattedMessage << std::endl;
+            // 如果日志文件数量小于等于最大保留天数，不需要清理
+            if (logFiles.size() <= static_cast<size_t>(maxLogDays)) {
+                return;
+            }
+
+            // 按名称排序（日期格式可以按字母排序）
+            std::sort(logFiles.begin(), logFiles.end());
+
+            // 删除最老的文件，直到达到保留天数
+            size_t filesToDelete = logFiles.size() - static_cast<size_t>(maxLogDays);
+            for (size_t i = 0; i < filesToDelete; ++i) {
+                const std::string& oldFile = logFiles[i];
+                if (removeFile(oldFile)) {
+                    std::cout << "Deleted old log file: " << oldFile << std::endl;
+                } else {
+                    std::cerr << "Failed to delete old log file: " << oldFile << std::endl;
+                }
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "Error cleaning old log files: " << e.what() << std::endl;
+        }
     }
 
-    // 输出到文件
-    if (initialized && useFileOutput && logFile.is_open()) {
-        logFile << formattedMessage << std::endl;
-        logFile.flush();
+    bool Logger::createLogDirectory() {
+        // 如果目录已存在，直接返回成功
+        if (fileExists(logDirectory) && isDirectory(logDirectory)) {
+            return true;
+        }
+
+        // 创建目录
+        int result = MKDIR(logDirectory.c_str());
+        return (result == 0);
     }
-}
 
-void Logger::debug(const std::string& message) {
-    log(LogLevel::DEBUG, message);
-}
+    bool Logger::fileExists(const std::string& path) {
+#ifdef _WIN32
+        DWORD attr = GetFileAttributesA(path.c_str());
+        return (attr != INVALID_FILE_ATTRIBUTES);
+#else
+        struct stat buffer;
+    return (stat(path.c_str(), &buffer) == 0);
+#endif
+    }
 
-void Logger::info(const std::string& message) {
-    log(LogLevel::INFO, message);
-}
+    bool Logger::isDirectory(const std::string& path) {
+#ifdef _WIN32
+        DWORD attr = GetFileAttributesA(path.c_str());
+        return (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY));
+#else
+        struct stat buffer;
+    return (stat(path.c_str(), &buffer) == 0 && S_ISDIR(buffer.st_mode));
+#endif
+    }
 
-void Logger::warning(const std::string& message) {
-    log(LogLevel::WARNING, message);
-}
+    std::string Logger::getCurrentDateString() {
+        auto now = std::chrono::system_clock::now();
+        auto now_time_t = std::chrono::system_clock::to_time_t(now);
+        struct tm now_tm;
+#ifdef _WIN32
+        localtime_s(&now_tm, &now_time_t);
+#else
+        localtime_r(&now_time_t, &now_tm);
+#endif
 
-void Logger::error(const std::string& message) {
-    log(LogLevel::ERROR, message);
-}
+        std::ostringstream oss;
+        oss << std::setfill('0') << std::setw(4) << (now_tm.tm_year + 1900) << "-"
+            << std::setfill('0') << std::setw(2) << (now_tm.tm_mon + 1) << "-"
+            << std::setfill('0') << std::setw(2) << now_tm.tm_mday;
+        return oss.str();
+    }
 
-void Logger::fatal(const std::string& message) {
-    log(LogLevel::FATAL, message);
-}
+    std::string Logger::getLogFilePath(const std::string& dateStr) {
+        return logDirectory + "/" + logBaseName + "_" + dateStr + ".log";
+    }
+
+    std::vector<std::string> Logger::getLogFiles() {
+        std::vector<std::string> result;
+
+        // 检查目录是否存在
+        if (!fileExists(logDirectory) || !isDirectory(logDirectory)) {
+            return result;
+        }
+
+#ifdef _WIN32
+        // Windows实现
+        WIN32_FIND_DATAA findData;
+        std::string searchPattern = logDirectory + "/*.*";
+
+        HANDLE hFind = FindFirstFileA(searchPattern.c_str(), &findData);
+        if (hFind == INVALID_HANDLE_VALUE) {
+            return result;
+        }
+
+        do {
+            // 跳过"."和".."
+            if (strcmp(findData.cFileName, ".") == 0 || strcmp(findData.cFileName, "..") == 0) {
+                continue;
+            }
+
+            // 检查是否是文件
+            if (!(findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
+                std::string filename = findData.cFileName;
+                // 检查是否符合日志文件格式
+                if (filename.find(logBaseName + "_") == 0 &&
+                    filename.find(".log") != std::string::npos) {
+                    result.push_back(logDirectory + "/" + filename);
+                }
+            }
+        } while (FindNextFileA(hFind, &findData));
+
+        FindClose(hFind);
+#else
+        // POSIX实现
+    DIR* dir = opendir(logDirectory.c_str());
+    if (dir == nullptr) {
+        return result;
+    }
+
+    struct dirent* entry;
+    while ((entry = readdir(dir)) != nullptr) {
+        // 跳过"."和".."
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
+
+        std::string filename = entry->d_name;
+        std::string fullPath = logDirectory + "/" + filename;
+
+        // 检查是否是文件
+        struct stat statbuf;
+        if (stat(fullPath.c_str(), &statbuf) == 0 && S_ISREG(statbuf.st_mode)) {
+            // 检查是否符合日志文件格式
+            if (filename.find(logBaseName + "_") == 0 &&
+                filename.find(".log") != std::string::npos) {
+                result.push_back(fullPath);
+            }
+        }
+    }
+
+    closedir(dir);
+#endif
+
+        return result;
+    }
+
+    bool Logger::removeFile(const std::string& filePath) {
+#ifdef _WIN32
+        return DeleteFileA(filePath.c_str()) != 0;
+#else
+        return unlink(filePath.c_str()) == 0;
+#endif
+    }
+
+} // namespace ffmpeg_stream

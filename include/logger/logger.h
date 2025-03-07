@@ -1,69 +1,201 @@
-#ifndef LOGGER_H
-#define LOGGER_H
+/**
+ * @file logger.h
+ * @brief 日志系统 - 支持每日滚动日志文件（不使用filesystem库）
+ */
 
-#include <iostream>
+#ifndef FFMPEG_STREAM_LOGGER_H
+#define FFMPEG_STREAM_LOGGER_H
+
+#include "common/common.h"
+#include <string>
 #include <fstream>
 #include <mutex>
-#include <string>
-#include <vector>
 #include <ctime>
-#include <sys/stat.h>
-#include <dirent.h>
+#include <vector>
+#include <iostream>
 
-enum class LogLevel {
-    DEBUG,
-    INFO,
-    WARNING,
-    ERROR,
-    FATAL
-};
+namespace ffmpeg_stream {
 
-class Logger {
-public:
-    // 初始化日志系统
-    static void init(bool logToFile = true, const std::string& logDir = "logs", LogLevel minLevel = LogLevel::INFO);
+// 日志系统类
+    class Logger {
+    public:
+        // 设置日志级别
+        static void setLogLevel(LogLevel level);
 
-    // 关闭日志系统
-    static void shutdown();
+        // 获取当前日志级别
+        static LogLevel getLogLevel();
 
-    // 日志方法
-    static void debug(const std::string& message);
-    static void info(const std::string& message);
-    static void warning(const std::string& message);
-    static void error(const std::string& message);
-    static void fatal(const std::string& message);
+        /**
+         * @brief 设置输出到日志文件
+         * @param toFile 是否输出到文件
+         * @param logDir 日志目录路径
+         * @param baseName 日志文件基本名称
+         * @param maxDays 最大保留天数
+         */
+        static void setLogToFile(bool toFile,
+                                 const std::string& logDir = "logs",
+                                 const std::string& baseName = "ffmpeg_stream",
+                                 int maxDays = 30);
 
-private:
-    // 记录日志的主要方法
-    static void log(LogLevel level, const std::string& message);
+        // 关闭日志文件
+        static void closeLogFile();
 
-    // 获取当前日期的日志文件路径
-    static std::string getCurrentLogFilePath();
+        // 各级别日志接口
+        template<typename... Args>
+        static void debug(const char* format, Args... args) {
+            if (logLevel <= LogLevel::DEBUG) {
+                log(LogLevel::DEBUG, format, args...);
+            }
+        }
 
-    // 检查并清理旧的日志文件
-    static void cleanupOldLogs();
+        template<typename... Args>
+        static void info(const char* format, Args... args) {
+            if (logLevel <= LogLevel::INFO) {
+                log(LogLevel::INFO, format, args...);
+            }
+        }
 
-    // 检查并切换日志文件（如果需要）
-    static void checkAndRotateLogFile();
+        template<typename... Args>
+        static void warning(const char* format, Args... args) {
+            if (logLevel <= LogLevel::WARNING) {
+                log(LogLevel::WARNING, format, args...);
+            }
+        }
 
-    // 创建目录（如果不存在）
-    static bool createDirectory(const std::string& path);
+        template<typename... Args>
+        static void error(const char* format, Args... args) {
+            if (logLevel <= LogLevel::ERROR) {
+                log(LogLevel::ERROR, format, args...);
+            }
+        }
 
-    // 检查文件是否存在
-    static bool fileExists(const std::string& filename);
+        template<typename... Args>
+        static void fatal(const char* format, Args... args) {
+            if (logLevel <= LogLevel::FATAL) {
+                log(LogLevel::FATAL, format, args...);
+            }
+        }
 
-    // 获取目录中的所有文件
-    static std::vector<std::string> getFilesInDirectory(const std::string& directory);
+    private:
+        // 单例模式
+        Logger();
+        ~Logger();
+        Logger(const Logger&) = delete;
+        Logger& operator=(const Logger&) = delete;
 
-    // 静态成员变量
-    static std::mutex logMutex;
-    static std::ofstream logFile;
-    static bool initialized;
-    static bool useFileOutput;
-    static LogLevel minimumLevel;
-    static std::string logDirectory;
-    static std::string currentLogDate;
-    static const int MAX_LOG_DAYS = 30;
-};
+        static Logger& getInstance();
 
-#endif // LOGGER_H
+        /**
+         * @brief 滚动日志文件(检查日期并创建新文件)
+         * @return 是否创建了新文件
+         */
+        bool rollLogFile();
+
+        /**
+         * @brief 清理旧日志文件
+         */
+        void cleanOldLogFiles();
+
+        /**
+         * @brief 创建日志目录
+         * @return 是否成功创建
+         */
+        bool createLogDirectory();
+
+        /**
+         * @brief 检查文件或目录是否存在
+         * @param path 路径
+         * @return 是否存在
+         */
+        bool fileExists(const std::string& path);
+
+        /**
+         * @brief 检查路径是否是目录
+         * @param path 路径
+         * @return 是否是目录
+         */
+        bool isDirectory(const std::string& path);
+
+        /**
+         * @brief 获取当前日期字符串
+         * @return 格式化的日期字符串 (YYYY-MM-DD)
+         */
+        std::string getCurrentDateString();
+
+        /**
+         * @brief 获取完整的日志文件路径
+         * @param dateStr 日期字符串
+         * @return 完整的文件路径
+         */
+        std::string getLogFilePath(const std::string& dateStr);
+
+        /**
+         * @brief 获取指定目录下的所有日志文件
+         * @return 日志文件路径列表
+         */
+        std::vector<std::string> getLogFiles();
+
+        /**
+         * @brief 删除文件
+         * @param filePath 文件路径
+         * @return 是否成功删除
+         */
+        bool removeFile(const std::string& filePath);
+
+        // 日志处理核心函数
+        template<typename... Args>
+        static void log(LogLevel level, const char* format, Args... args) {
+            Logger& instance = getInstance();
+            std::lock_guard<std::mutex> lock(instance.logMutex);
+
+            // 如果启用了日志文件，检查是否需要滚动
+            if (instance.logToFile) {
+                instance.rollLogFile();
+            }
+
+            char buffer[1024];
+            snprintf(buffer, sizeof(buffer), format, args...);
+
+            const char* levelStr = logLevelToString(level).c_str();
+
+            auto now = std::chrono::system_clock::now();
+            auto now_time_t = std::chrono::system_clock::to_time_t(now);
+            struct tm now_tm;
+#ifdef _WIN32
+            localtime_s(&now_tm, &now_time_t);
+#else
+            localtime_r(&now_time_t, &now_tm);
+#endif
+
+            char time_str[20];
+            strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", &now_tm);
+
+            // 构造日志消息
+            std::string logMessage = std::string("[") + time_str + "] [" + levelStr + "]: " + buffer;
+
+            // 输出到控制台
+            std::cout << logMessage << std::endl;
+
+            // 如果需要，输出到文件
+            if (instance.logToFile && instance.logFile.is_open()) {
+                instance.logFile << logMessage << std::endl;
+                instance.logFile.flush();
+            }
+        }
+
+        static LogLevel logLevel;
+        static bool initialized;
+
+        bool logToFile;
+        std::string logDirectory;
+        std::string logBaseName;
+        int maxLogDays;
+        std::string currentDate;
+        std::string currentLogFile;
+        std::ofstream logFile;
+        std::mutex logMutex;
+    };
+
+} // namespace ffmpeg_stream
+
+#endif // FFMPEG_STREAM_LOGGER_H

@@ -1,73 +1,59 @@
 {
-  "system": {
-    "worker_threads": 8,
-    "monitor_interval": 500,
-    "realtime_priority": true,
-    "log": {
-      "level": "info",
-      "file": "logs/stream.log",
-      "console": true,
-      "file_output": true
-    }
-  },
+  "logLevel": "INFO",
+  "logToFile": true,
+  "logDirectory": "logs",
+  "logBaseName": "ffmpeg_stream",
+  "maxLogDays": 30,
+  "monitorInterval": 1000,
+  "threadPoolSize": 8,
+  "preloadLibraries": true,
+  "defaultDecoderHWAccel": "CUDA",
+  "defaultEncoderHWAccel": "CUDA",
   "streams": [
     {
-      "id": "camera1",
-      "name": "摄像头1",
-      "url": "rtsp://192.168.1.100:554/stream?tcp",
-      "type": "pull",
-      "hwaccel": "cuda",
-      "codec": "h264",
-      "max_reconnect": 10,
-      "reconnect_delay": 1000,
-      "auto_reconnect": true,
-      "low_latency": true,
-      "max_queue_size": 3
+      "id": 0,
+      "name": "Camera1",
+      "type": "PULL",
+      "inputUrl": "rtsp://suo58:swai12345@192.168.20.23:554/Streaming/Channels/101?transportmode=unicast&profile=Profile_1",
+      "autoStart": true,
+      "maxReconnects": 10,
+      "reconnectDelay": 1000,
+      "decoderHWAccel": "CUDA",
+      "networkTimeout": 3000,
+      "rtspTransport": "tcp",
+      "lowLatency": true,
+      "extraOptions": {
+        "buffer_size": "1024000",
+        "max_delay": "500000",
+        "fflags": "nobuffer",
+        "flags": "low_delay"
+      }
     },
     {
-      "id": "camera2",
-      "name": "摄像头2",
-      "url": "rtsp://192.168.1.101:554/stream?tcp",
-      "type": "pull",
-      "hwaccel": "cuda",
-      "codec": "h264",
-      "max_reconnect": 10,
-      "reconnect_delay": 1000,
-      "auto_reconnect": true,
-      "low_latency": true,
-      "max_queue_size": 3
-    },
-    {
-      "id": "rtmp-live",
-      "name": "直播推流",
-      "url": "rtmp://live.example.com/live/stream1",
-      "type": "push",
-      "hwaccel": "cuda",
+      "id": 1,
+      "name": "Restream1",
+      "type": "PUSH",
+      "inputUrl": "rtsp://suo58:swai12345@192.168.20.22:554/Streaming/Channels/101?transportmode=unicast&profile=Profile_1",
+      "outputUrl": "rtmp://127.0.0.1:10085/hls/DvbuYNtNR?sign=vvxuLNpNRz",
+      "autoStart": true,
       "width": 1920,
       "height": 1080,
       "bitrate": 4000000,
       "fps": 30,
-      "gop": 30,
-      "codec": "h264",
-      "auto_reconnect": true,
-      "low_latency": true,
-      "max_queue_size": 3
-    },
-    {
-      "id": "local-display",
-      "name": "本地显示",
-      "url": "rtmp://localhost:1935/live/preview",
-      "type": "push",
-      "hwaccel": "cuda",
-      "width": 1280,
-      "height": 720,
-      "bitrate": 2000000,
-      "fps": 30,
-      "gop": 30,
-      "codec": "h264",
-      "auto_reconnect": true,
-      "low_latency": true,
-      "max_queue_size": 2
+      "videoCodec": "h264",
+      "decoderHWAccel": "CUDA",
+      "encoderHWAccel": "CUDA",
+      "maxReconnects": 10,
+      "reconnectDelay": 1000,
+      "networkTimeout": 3000,
+      "rtspTransport": "tcp",
+      "lowLatency": true,
+      "extraOptions": {
+        "preset": "ultrafast",
+        "tune": "zerolatency",
+        "fflags": "nobuffer",
+        "flags": "low_delay"
+      }
     }
   ]
 }
