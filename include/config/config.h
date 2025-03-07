@@ -26,6 +26,7 @@ namespace ffmpeg_stream {
         StreamType type;
         std::string inputUrl;
         std::string outputUrl;
+        std::string outputFormat;
         bool autoStart;
 
         // 重连设置

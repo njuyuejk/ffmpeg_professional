@@ -27,6 +27,7 @@ namespace ffmpeg_stream {
         if (j.contains("type")) config.type = j["type"] == "PUSH" ? StreamType::PUSH : StreamType::PULL;
         if (j.contains("inputUrl")) config.inputUrl = j["inputUrl"];
         if (j.contains("outputUrl")) config.outputUrl = j["outputUrl"];
+        if (j.contains("outputFormat")) config.outputFormat = j["outputFormat"];
         if (j.contains("autoStart")) config.autoStart = j["autoStart"];
 
         if (j.contains("maxReconnects")) config.maxReconnects = j["maxReconnects"];
@@ -62,6 +63,7 @@ namespace ffmpeg_stream {
         j["type"] = type == StreamType::PUSH ? "PUSH" : "PULL";
         j["inputUrl"] = inputUrl;
         j["outputUrl"] = outputUrl;
+        j["outputFormat"] = outputFormat;
         j["autoStart"] = autoStart;
 
         j["maxReconnects"] = maxReconnects;

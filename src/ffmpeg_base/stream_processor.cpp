@@ -285,9 +285,13 @@ namespace ffmpeg_stream {
 
         // 设置网络超时选项
         int timeoutMicros = config_.networkTimeout * 1000;
-        av_dict_set_int(&options, "timeout", timeoutMicros, 0);
+//        av_dict_set_int(&options, "timeout", timeoutMicros, 0);
         av_dict_set_int(&options, "stimeout", timeoutMicros, 0);
         av_dict_set(&options, "rtsp_transport", config_.rtspTransport.c_str(), 0);
+
+        // 增加探测大小和分析持续时间，解决"not enough frames to estimate rate"问题
+        av_dict_set(&options, "probesize", "10485760", 0);     // 10MB (默认是5MB)
+        av_dict_set(&options, "analyzeduration", "5000000", 0); // 5秒 (默认是0.5秒)
 
         // 应用额外选项
         for (const auto& [key, value] : config_.extraOptions) {
@@ -372,7 +376,7 @@ namespace ffmpeg_stream {
         }
 
         // 创建输出格式上下文
-        avformat_alloc_output_context2(&outputFormatContext_, nullptr, nullptr,
+        avformat_alloc_output_context2(&outputFormatContext_, nullptr, config_.outputFormat.c_str(),
                                        config_.outputUrl.c_str());
         if (!outputFormatContext_) {
             decoder_->cleanup();
